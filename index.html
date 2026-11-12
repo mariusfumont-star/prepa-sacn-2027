@@ -209,6 +209,9 @@ details.sub li{margin-bottom:4px}
 .excard textarea{width:100%;min-height:120px;padding:10px;border:1px solid var(--line);border-radius:var(--r);background:var(--sheet);font-family:var(--f-body);font-size:.95rem;resize:vertical}
 .credit{font-size:.82rem;color:var(--muted);margin-top:8px;letter-spacing:.03em}
 .credit strong{color:var(--ink);letter-spacing:.06em}
+.credit a{color:var(--muted)}
+.cgvok{display:flex;gap:8px;align-items:flex-start;font-size:.85rem;line-height:1.45;color:var(--muted);max-width:560px}
+.cgvok input{width:18px;height:18px;flex:none;margin-top:2px}
 .hdracct{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--accent);color:var(--accent);border-radius:999px;padding:4px 12px;font-size:.82rem;font-weight:600;text-decoration:none;background:var(--sheet)}
 .hdracct.on{border-color:var(--ok);color:var(--ok)}
 .lockbox{text-align:center;padding:40px 24px;display:flex;flex-direction:column;align-items:center;gap:10px}
@@ -304,7 +307,7 @@ img{max-width:100%}
     <div>
       <div class="eyebrow">Concours commun interne · Fonction publique de l'État · session 2027</div>
       <h1>Prépa SA interministériel 2027</h1>
-      <div class="credit">Créé par <strong>G. FUMONT</strong> · FMT Collaboration</div>
+      <div class="credit">Créé par <strong>G. FUMONT</strong> · FMT Collaboration · <a href="mentions-legales.html">Mentions légales</a> · <a href="cgv.html">CGV</a> · <a href="confidentialite.html">Confidentialité</a></div>
       <div class="who" id="who" style="margin-top:10px"><a class="hdracct" id="hdrAcct" href="#compte">Se connecter · créer un compte</a></div>
     </div>
     <div class="countdowns" id="countdowns"></div>
@@ -715,6 +718,7 @@ img{max-width:100%}
           <h3>Lien de paiement Stripe</h3>
           <p style="margin:0 0 8px;font-size:.88rem;color:var(--muted)">Collez ici le lien de paiement de l'abonnement à 7,99 € par mois. Il apparaît aussitôt sur le bouton « S'abonner » des candidats, avec leur adresse e-mail déjà remplie.</p>
           <div class="row"><input id="gPay" type="url" placeholder="https://buy.stripe.com/…" style="flex:1 1 240px;padding:7px 9px;border:1px solid var(--line);border-radius:var(--r);background:var(--sheet)"><button class="btn" id="gPaySave" type="button">Enregistrer</button></div>
+          <div class="row" style="margin-top:8px"><input id="gPortail" type="url" placeholder="Portail client : https://billing.stripe.com/p/login/…" style="flex:1 1 240px;padding:7px 9px;border:1px solid var(--line);border-radius:var(--r);background:var(--sheet)"></div>
         </div>
         <div class="sheet">
           <h3>Contenus de la version complète</h3>
@@ -1768,14 +1772,37 @@ async function loadPremium(){
 }
 function abonnerUrl(){
   const base = PAY_URL; if(!base) return null;
-  try{ const u = new URL(base); if(fbUser && fbUser.email) u.searchParams.set("prefilled_email", fbUser.email); if(fbUser) u.searchParams.set("client_reference_id", fbUser.uid); return u.toString(); }catch(e){ return base; }
+  try{ const u = new URL(base); if(fbUser && fbUser.email) u.searchParams.set("prefilled_email", fbUser.email); if(fbUser) u.searchParams.set("client_reference_id", "sacn_"+fbUser.uid); return u.toString(); }catch(e){ return base; }
 }
-let PAY_URL = null;
-async function loadPayUrl(){ try{ const d = await firebase.firestore().collection("config").doc("sacn_paiement").get(); PAY_URL = d.exists ? (d.data().url||null) : null; }catch(e){} renderAcctHeader(); }
+let PAY_URL = null, PORTAIL_URL = null;
+async function loadPayUrl(){ try{ const d = await firebase.firestore().collection("config").doc("sacn_paiement").get(); PAY_URL = d.exists ? (d.data().url||null) : null; PORTAIL_URL = d.exists ? (d.data().portail||null) : null; }catch(e){} renderAcctHeader(); }
+function portailUrl(){
+  if(!PORTAIL_URL) return null;
+  try{ const u = new URL(PORTAIL_URL); if(fbUser && fbUser.email) u.searchParams.set("prefilled_email", fbUser.email); return u.toString(); }catch(e){ return PORTAIL_URL; }
+}
+// Bouton d'abonnement précédé de l'acceptation des CGV et de la renonciation au droit de rétractation
+// (accès immédiat au contenu numérique, article L. 221-28 du Code de la consommation).
 function abonnerBtn(label){
   const u = abonnerUrl();
   if(!u) return el("span",{style:"font-size:.88rem;color:var(--muted)",text:"Le paiement en ligne sera bientôt disponible."});
-  return el("a",{class:"btn",href:u,target:"_blank",rel:"noopener",text:label||("S'abonner · "+PRIX+" par mois")});
+  const cb = el("input",{type:"checkbox"});
+  const lab = el("label",{class:"cgvok"}, cb, el("span",{},
+    document.createTextNode("J'accepte les "), el("a",{href:"cgv.html",target:"_blank",rel:"noopener",text:"conditions générales de vente"}),
+    document.createTextNode(" et je demande l'accès immédiat au contenu : je reconnais perdre ainsi mon droit de rétractation.")));
+  const a = el("a",{class:"btn",href:u,target:"_blank",rel:"noopener",text:label||("S'abonner · "+PRIX+" par mois")});
+  a.addEventListener("click",e=>{ if(!cb.checked){ e.preventDefault(); toast("Cochez d'abord la case d'acceptation des CGV"); cb.focus(); } else suiviPaiement(); });
+  return el("div",{style:"display:flex;flex-direction:column;gap:10px;align-items:flex-start"}, lab, a);
+}
+// Après le paiement : l'accès est activé automatiquement (webhook Stripe → Firestore). On revérifie quelques fois.
+let suiviT = null;
+function suiviPaiement(){
+  if(suiviT || !fbUser) return; let n = 0;
+  suiviT = setInterval(async()=>{
+    n++; if(document.hidden && n<60) return;
+    try{ await computeAccess(); }catch(e){}
+    if(ACC.kind==="abonne"){ clearInterval(suiviT); suiviT=null; toast("Abonnement activé : merci !"); premiumState="none"; loadPremium(); renderAcctHeader(); }
+    else if(n>=90){ clearInterval(suiviT); suiviT=null; }
+  }, 5000);
 }
 function renderLock(v){
   $("#lockTitle").textContent = PREMIUM_VIEWS[v];
@@ -2137,15 +2164,16 @@ function renderAccBox(){
   let p="";
   if(ACC.kind==="essai") p="Vous profitez gratuitement de toute l'application jusqu'au "+new Date(ACC.fin).toLocaleDateString("fr-FR",{day:"numeric",month:"long"})+". Pour continuer ensuite, abonnez-vous : "+PRIX+" par mois, sans engagement.";
   else if(ACC.kind==="expire") p="Votre essai de "+ESSAI_JOURS+" jours est terminé. Vous gardez la partie gratuite et votre progression. L'abonnement à "+PRIX+" par mois rouvre tous les contenus.";
-  else if(ACC.kind==="abonne") p="Merci pour votre abonnement. Pour le résilier, utilisez le lien reçu par e-mail lors du paiement ou écrivez au gestionnaire.";
+  else if(ACC.kind==="abonne") p="Merci pour votre abonnement. Vous pouvez le gérer ou le résilier à tout moment, sans frais : l'accès reste ouvert jusqu'à la fin du mois payé.";
   else if(ACC.kind==="admin") p="Compte gestionnaire : aucun délai, aucune limite. L'espace gestionnaire est dans le menu.";
   if(premiumState==="error") p="Votre accès n'a pas pu être vérifié. Vérifiez votre connexion, puis rechargez l'application.";
   if(premiumState==="nocontent") p="Les contenus de la version complète sont en cours de publication par le gestionnaire.";
   if(p) box.append(el("p",{style:"margin:8px 0 0;font-size:.92rem",text:p}));
   if(ACC.kind==="essai"||ACC.kind==="expire"){
     box.append(el("div",{class:"row",style:"margin-top:10px"}, abonnerBtn()));
-    if(PAY_URL) box.append(el("p",{style:"margin:8px 0 0;font-size:.82rem;color:var(--muted)",text:"Paiement sécurisé par Stripe. Utilisez la même adresse e-mail que votre compte : votre accès est activé dans les 24 heures suivant le paiement."}));
+    if(PAY_URL) box.append(el("p",{style:"margin:8px 0 0;font-size:.82rem;color:var(--muted)",text:"Paiement sécurisé par Stripe. Votre accès est activé automatiquement quelques instants après le paiement ; revenez ensuite sur cette page."}));
   }
+  if(ACC.kind==="abonne" && portailUrl()) box.append(el("div",{class:"row",style:"margin-top:10px"}, el("a",{class:"btn",href:portailUrl(),target:"_blank",rel:"noopener",text:"Gérer mon abonnement"})));
 }
 function renderAcctHeader(){
   renderAccBox();
@@ -2250,9 +2278,9 @@ function gestionOpen(){
     $("#gSearch").addEventListener("input",gRender);
     $("#gReload").addEventListener("click",gLoad);
     $("#gPubBtn").addEventListener("click",()=>publierContenus(true));
-    $("#gPaySave").addEventListener("click",async()=>{ const u=$("#gPay").value.trim(); if(u && !/^https:\/\//.test(u)){ toast("Le lien doit commencer par https://"); return; } try{ await firebase.firestore().collection("config").doc("sacn_paiement").set({url:u}); PAY_URL=u||null; renderAcctHeader(); toast("Lien de paiement enregistré"); }catch(e){ toast("Échec : "+(e.code||e.message)); } });
+    $("#gPaySave").addEventListener("click",async()=>{ const u=$("#gPay").value.trim(), pt=$("#gPortail").value.trim(); if((u && !/^https:\/\//.test(u)) || (pt && !/^https:\/\//.test(pt))){ toast("Les liens doivent commencer par https://"); return; } try{ await firebase.firestore().collection("config").doc("sacn_paiement").set({url:u, portail:pt}); PAY_URL=u||null; PORTAIL_URL=pt||null; renderAcctHeader(); toast("Liens de paiement enregistrés"); }catch(e){ toast("Échec : "+(e.code||e.message)); } });
   }
-  $("#gPay").value = PAY_URL||"";
+  $("#gPay").value = PAY_URL||""; $("#gPortail").value = PORTAIL_URL||"";
   if(!ADMIN_K) $("#gPub").textContent = adminState==="error"? "Clé gestionnaire absente" : "—";
   if(!G.t || Date.now()-G.t>30000){ G.t=Date.now(); gLoad(); }
 }
@@ -2274,6 +2302,7 @@ function initAccount(){
       syncPill("Non connecté"); setSaveState("Enregistré sur cet appareil"); renderAll(); route(); return;
     }
     wasMember = true; loadPremium(); loadPayUrl();
+    if(/[?&]paye=1/.test(location.search)){ history.replaceState(null,"",location.pathname+location.hash); toast("Paiement reçu : activation de votre abonnement…"); suiviPaiement(); }
     $("#acctWho").textContent = u.email || "";
     syncPill("Connexion…","warn");
     const ref = fs.collection("users").doc(u.uid).collection("data").doc("sacn_progress");

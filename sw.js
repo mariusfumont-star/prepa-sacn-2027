@@ -1,4 +1,4 @@
-const VERSION = "sacn-prepa-v1";
+const VERSION = "sacn-prepa-v2";
 const SHELL = ["./", "index.html", "manifest.webmanifest", "firebase-config.js", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png"];
 const CACHEABLE_HOSTS = ["fonts.googleapis.com", "fonts.gstatic.com", "www.gstatic.com"];
 
